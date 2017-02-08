@@ -1,0 +1,9 @@
+*.pkl
+*.csv
+*.swp
+*.swo
+*.ini
+*egg-info*
+*build
+*__pycache__*
+*.pyc
