@@ -9,6 +9,9 @@ from snakenet.draw import draw_plane
 from snakenet.game import Game
 from snakenet.game_constants import DOWN, UP, RIGHT, LEFT
 from snakenet.model_player import get_model_keypress
+from snakenet.train import RewardPredictor
+
+RewardPredictor = RewardPredictor
 
 QUIT = 'quit'
 TICK = pygame.USEREVENT + 1

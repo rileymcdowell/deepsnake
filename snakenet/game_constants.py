@@ -1,3 +1,5 @@
+import pygame
+
 from collections import namedtuple
 
 # Screen Constants
@@ -13,15 +15,21 @@ DOWN = 'd'
 UP = 'u'
 RIGHT = 'r'
 LEFT = 'l'
+MOVE_TO_KEYPRESS = { UP: pygame.K_UP
+                   , DOWN: pygame.K_DOWN
+                   , RIGHT: pygame.K_RIGHT
+                   , LEFT: pygame.K_LEFT
+                   }
 
 # Snake Constants
 SNAKE_INITIALSIZE = 4
 SNAKE_GROWBY = 3
 
-# Plane Constants
-SNAKE_VALUE = 0 
-EMPTY_VALUE = 1 
-ITEM_VALUE = 2
+# Plane Constants, Must Be > 0.
+SNAKE_HEAD = 1
+SNAKE_VALUE = 2 
+EMPTY_VALUE = 3 
+FOOD_VALUE = 4 
 
 Score = namedtuple('Score', ['food', 'moves'])
 

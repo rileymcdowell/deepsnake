@@ -8,19 +8,21 @@ COLOR_DEPTH = 32 # bits
 CAPTION = "Snake!"
 
 class Game(object):
-    def __init__(self):
-        self.window_surface = pygame.display.set_mode(RESOLUTION, FLAGS, COLOR_DEPTH)
-        pygame.display.set_caption(CAPTION)
+    def __init__(self, graphical=True):
+        if graphical:
+            self.window_surface = pygame.display.set_mode(RESOLUTION, FLAGS, COLOR_DEPTH)
+            pygame.display.set_caption(CAPTION)
         self.state = GameState()
 
     def keypress(self, direction):
-        if direction == UP:
+        """ Allow movements, but not in the exact opposite direction """
+        if direction == UP and self.state.last_moved != DOWN :
             self.state.last_pressed = UP
-        elif direction == DOWN:
+        elif direction == DOWN and self.state.last_moved != UP:
             self.state.last_pressed = DOWN
-        elif direction == RIGHT:
+        elif direction == RIGHT and self.state.last_moved != LEFT:
             self.state.last_pressed = RIGHT
-        elif direction == LEFT:
+        elif direction == LEFT and self.state.last_moved != RIGHT:
             self.state.last_pressed = LEFT
 
     def move(self):

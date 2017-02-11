@@ -1,16 +1,19 @@
 import numpy as np
 
-from snakenet.game_constants import NUM_ROWS, NUM_COLUMNS, SNAKE_INITIALSIZE, SNAKE_VALUE, EMPTY_VALUE, LoseException, SNAKE_GROWBY 
+from snakenet.game_constants import NUM_ROWS, NUM_COLUMNS, SNAKE_INITIALSIZE, SNAKE_GROWBY
+from snakenet.game_constants import SNAKE_VALUE, EMPTY_VALUE, SNAKE_HEAD, FOOD_VALUE  
 from snakenet.game_constants import UP, DOWN, RIGHT, LEFT
-from collections import deque
+from snakenet.game_constants import LoseException
+from snakenet.snake_deque import SnakeDeque
 
 class GameState(object):
     def __init__(self):
         self.plane = np.full((NUM_ROWS, NUM_COLUMNS), fill_value=EMPTY_VALUE, dtype=np.uint8)
-        self.snake_deque = deque(maxlen=SNAKE_INITIALSIZE)
+        self.snake_deque = SnakeDeque(maxlen=SNAKE_INITIALSIZE)
         self.snake_position = None
         self.food_position = None
-        self.last_pressed = None
+        self.last_pressed = None 
+        self.last_moved = UP # Snake start in middle going up.
 
         # Setup the initial game state.
         self.initialize()
@@ -37,10 +40,11 @@ class GameState(object):
                 continue
             else:
                 self.food_position = (row, column)
+                self.plane[row, column] = FOOD_VALUE
                 break
 
     def eat_food(self):
-        self.snake_deque = deque(self.snake_deque, maxlen=self.snake_deque.maxlen + SNAKE_GROWBY)
+        self.snake_deque = SnakeDeque(self.snake_deque, maxlen=self.snake_deque.maxlen + SNAKE_GROWBY)
         self.set_random_food_position()
         self.times_eaten += 1
 
@@ -49,19 +53,27 @@ class GameState(object):
 
     def set_snake(self, row, column):
         position = (row, column)
+
+        # Detect loss conditions.
         if row < 0 or row >= NUM_ROWS:
             self.lose()
         if column < 0 or column >= NUM_COLUMNS:
             self.lose()
         if position in self.snake_deque:
             self.lose()
-
-        self.plane[row, column] = SNAKE_VALUE
-        self.snake_deque.appendleft((row, column))
-        self.snake_position = (row, column)
-
+            
+        # Detect food condition.
         if position == self.food_position:
             self.eat_food()
+
+        self.plane[row, column] = SNAKE_HEAD # Assign head.
+        if self.snake_position is not None:
+            last_row, last_column = self.snake_position
+            self.plane[last_row, last_column] = SNAKE_VALUE # Overwrite head.
+        popped_value = self.snake_deque.appendleft_maybepop((row, column))
+        if popped_value is not None:
+            self.plane[popped_value] = EMPTY_VALUE
+        self.snake_position = (row, column)
 
     @property
     def row(self):
@@ -70,15 +82,19 @@ class GameState(object):
     @property
     def column(self):
         return self.snake_position[1]
-
+    
     def process_move(self):
         if self.last_pressed == UP:
             self.set_snake(self.row - 1, self.column)
+            self.last_moved = UP
         if self.last_pressed == DOWN:
             self.set_snake(self.row + 1, self.column)
+            self.last_moved = DOWN 
         if self.last_pressed == RIGHT:
             self.set_snake(self.row, self.column + 1)
+            self.last_moved = RIGHT
         if self.last_pressed == LEFT:
             self.set_snake(self.row, self.column - 1)
+            self.last_moved = LEFT
         self.moves += 1
             
