@@ -3,9 +3,9 @@ import pygame
 from collections import namedtuple
 
 # Screen Constants
-PIXEL_SIZE = 8
-NUM_ROWS = 32 + 1 
-NUM_COLUMNS = 32 + 1 
+PIXEL_SIZE = 16 
+NUM_ROWS = 16 + 1 
+NUM_COLUMNS = 16 + 1 
 PAD_ROWS = 1
 PAD_COLUMNS = 1
 RESOLUTION = (PIXEL_SIZE * (NUM_ROWS+PAD_ROWS*2), PIXEL_SIZE * (NUM_COLUMNS+PAD_COLUMNS*2))

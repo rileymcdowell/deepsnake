@@ -8,108 +8,107 @@ from keras.models import Sequential, Model
 from keras.layers import Dense, Activation, Flatten, Dropout, Input, merge
 from keras.layers import Convolution2D, MaxPooling2D
 from itertools import takewhile, islice
+from argparse import ArgumentParser
 
 from snakenet.game import Game
-from snakenet.model_player import get_model_prediction_idx, VALID_MOVES 
+from snakenet.model_player import get_model_prediction_idx, VALID_MOVES, get_model, get_future_rewards
 from snakenet.game_constants import DOWN, UP, LEFT, RIGHT, NUM_ROWS, NUM_COLUMNS, LoseException
+from snakenet.snake_printer import print_plane
 
-TRANSITION_MEMORY = 100000 # Number of 'inter-frames' to remember
-DISCOUNT_FACTOR_GAMMA = 0.8
-RANDOM_MOVE_PROBABILITY = 1.0 / 5
+TRANSITION_MEMORY = 1000000 # Number of 'inter-frames' to remember
+DISCOUNT_FACTOR_GAMMA = 0.99
 N_VALID_MOVES = len(VALID_MOVES)
 
 ALIVE_POINTS = 0
 EATING_POINTS = 1
 DYING_POINTS = -1
 
-RANDOM_SAMPLE_BATCH_SIZE = 50 
+RANDOM_SAMPLE_BATCH_SIZE = 25 
 
-nb_filters = 32 # Number of distinct convolutional filters to use.
-pool_size = (3, 3) # Size of pooling area for max pooling.
-kernel_size = (3, 3) # Convolutional kernel size.
+
+# Input 1  = (None, 1, r, c)
+# Output 1 = (None, 16, r, c) w/ border_mode='same'
+# Input 2  = (None, 16, r, c)
+# Output 2 = (None, 32, r, c) w/ border_mode='same'
+CONV_CONFIG = [ (16, (3, 3), 'same')
+              , (32, (9, 9), 'same')
+              ]
+
+# 1 is number of channels (this is grayscale).
 input_shape = (1, NUM_ROWS, NUM_COLUMNS)
+
+def get_random_move_probability(cur_epoch):
+    if cur_epoch > 1e6:
+        return 0.1
+    else:
+        return 0.9 * (1 - (cur_epoch / 1e6)) + 0.1
 
 def get_random_move_idx():
     return np.random.choice(4, size=1)[0] 
 
-class RewardPredictor(object):
+def construct_model():
+    # The snake state plane model.
+    input_plane = Input(shape=input_shape)
+
+    plane_net = Sequential()
+    # Loop over convolutional layers and add them.
+    for idx, (filters, kernel_size, border_mode) in enumerate(CONV_CONFIG):
+        kwargs = { 'border_mode': border_mode, 'activation':'relu' }
+        if idx == 0:
+            kwargs['input_shape'] = input_shape
+        # Adding includes conv layer and activation function.     
+        plane_net.add(Convolution2D(filters, kernel_size[0], kernel_size[1], **kwargs))
+    plane_net.add(Flatten())
+
+    # Encode action.
+    action_input = Input(shape=(N_VALID_MOVES,))
+
+    # Encode inputs.
+    encoded_plane = plane_net(input_plane)
+
+    # Merge encoded values together.
+    merged = merge([action_input, encoded_plane], mode='concat')
+
+    # The reward predicting network (filters is from the last iteration of the loop).
+    final_shape = int( NUM_ROWS * NUM_COLUMNS * filters + len(VALID_MOVES) )
+    last_stage = Sequential()
+    last_stage.add(Dense(256, input_shape=(final_shape,)))
+    last_stage.add(Activation('relu'))
+    last_stage.add(Dense(1))
+    last_stage.add(Activation('linear'))
+
+    output = last_stage(merged)
+
+    model = Model(input=[action_input, input_plane], output=output)
+
+    # Compile the model.
+    model.compile(loss='mse', optimizer='nadam')
+
+    return model
+
+class QNetwork(object):
     def __init__(self):
-        # The snake state plane model.
-        input_plane = Input(shape=input_shape)
+        self.model = construct_model()
+        self.n_epochs = 0
+        self.avg_moves = [] 
+        self.avg_food = []
+        self.n_games = []
+        self.epoch_counter = []
 
-        plane_net = Sequential()
-        # 33 * 33 w/ border_mode='same'.
-        plane_net.add(Convolution2D(nb_filters, kernel_size[0], kernel_size[1], border_mode='same', input_shape=input_shape))
-        plane_net.add(Activation('relu'))
-        # pool_size==stride_size == (3x3). Should get an 11x11 image out.
-        plane_net.add(MaxPooling2D(pool_size=pool_size, strides=pool_size))
-        plane_net.add(Dropout(0.25))
-        plane_net.add(Flatten())
-        
-        # Encode action.
-        action_input = Input(shape=(N_VALID_MOVES,))
-
-        # Encode inputs.
-        encoded_plane = plane_net(input_plane)
-
-        # Merge encoded values together.
-        merged = merge([action_input, encoded_plane], mode='concat')
-
-        # The reward predicting network.
-        final_shape = int( (NUM_ROWS/pool_size[0]) * (NUM_COLUMNS/pool_size[1]) * nb_filters + len(VALID_MOVES) )
-        last_stage = Sequential()
-        last_stage.add(Dense(256, input_shape=(final_shape,)))
-        last_stage.add(Activation('relu'))
-        last_stage.add(Dense(32))
-        last_stage.add(Activation('relu'))
-        last_stage.add(Dense(1))
-        last_stage.add(Activation('sigmoid'))
-
-        output = last_stage(merged)
-
-        model = Model(input=[action_input, input_plane], output=output)
-
-        # Compile the model.
-        model.compile(loss='mse', optimizer='rmsprop')
-
-        # Save a reference to the model.
-        self.model = model
+    def save_performance(self, moves, foods, games):
+        self.avg_moves.append(moves)
+        self.avg_food.append(foods)
+        self.n_games.append(games)
+        self.epoch_counter.append(self.n_epochs)
 
     def fit(self, inputs, targets, **kwargs):
-        self.model.fit(inputs, targets, **kwargs)
+        self.n_epochs += 1
+        self.model.fit(inputs, targets, nb_epoch=1, verbose=0, **kwargs)
 
     def predict(self, inputs):
         return self.model.predict(inputs)
 
-Transition = namedtuple('Transition', ['prev_state', 'action', 'reward', 'new_state', 'terminal'])
-
-class Experience(object):
-    def __init__(self, prev_state, action, discounted_reward, new_state):
-        self.prev_state = prev_state
-        self.action = action
-        self.discounted_reward = discounted_reward
-        self.new_state = new_state
-
-    def as_image_move_y_tuple(self):
-        move_array = np.zeros(4)
-        move_array[self.action] = 1
-        move = move_array
-        image = self.prev_state[np.newaxis,:,:]
-        return image, move, self.discounted_reward
-
-
-def experience_from_many_transitions(transitions):
-    t_0 = transitions[0]
-    discounted_reward = 0
-    for idx, transition in enumerate(transitions):
-        # Future rewards are worth a bit less than current rewards.
-        discounted_reward += transition.reward * DISCOUNT_FACTOR_GAMMA**idx
-
-    experience = Experience(t_0.prev_state, t_0.action, discounted_reward, t_0.new_state)
-    return experience
-
-def experience_from_one_transition(transition):
-    return experience_from_many_transitions([transition])
+Transition = namedtuple('Transition', ['old_state', 'action', 'reward', 'new_state', 'terminal'])
 
 class TransitionSequence(object):
     def __init__(self):
@@ -119,27 +118,17 @@ class TransitionSequence(object):
     def random_sample(self, sample_size):
         idxs = np.random.choice(len(self.transitions), size=sample_size) 
 
-        experiences = []
-        for idx in map(int, idxs):
-            game_transitions = list(takewhile(lambda t: not t.terminal, islice(self.transitions, idx, None)))
-            num_transitions = len(game_transitions)
-            game_transitions.append(self.transitions[idx + num_transitions])
-            if len(game_transitions) <= 0:
-                raise NotImplementedException()
-            if len(game_transitions) == 1:
-                experience = experience_from_one_transition(self.transitions[idx])
-            else:
-                experience = experience_from_many_transitions(game_transitions)
-            experience = experience_from_many_transitions(game_transitions)
-            experiences.append(experience)
+        samples = []
+        for idx in idxs:
+            samples.append(self.transitions[idx])
 
-        return experiences
+        return samples
 
-    def record_transition(self, prev_state, action, reward, new_state, terminal):
-        self.next_transitions.append(Transition(prev_state, action, reward, new_state, terminal))
+    def record_transition(self, old_state, action, reward, new_state, terminal):
+        self.next_transitions.append(Transition(old_state, action, reward, new_state, terminal))
 
     def is_ready_to_train(self):
-        return len(self.transitions) > 0 
+        return len(self.transitions) > 0
 
     def finish_game(self):
         for nt in self.next_transitions:
@@ -147,35 +136,43 @@ class TransitionSequence(object):
 
 def trigger_and_return_action(game, sequence, model):
     p = np.random.random(1)
-    if p < RANDOM_MOVE_PROBABILITY:
+    if p < get_random_move_probability(model.n_epochs):
         move_idx = get_random_move_idx()
     else:
         move_idx = get_model_prediction_idx(game, model)
     game.keypress(VALID_MOVES[move_idx])
     return move_idx
 
+def get_value_from_sample(sample, model):
+    """ Calculate the Q value for this transition """
+    if sample.terminal:
+        return sample.reward
+    else:
+        return np.max(get_future_rewards(sample.new_state, model)) * DISCOUNT_FACTOR_GAMMA
+
 def do_learning(model, sequence):
-    experiences = sequence.random_sample(RANDOM_SAMPLE_BATCH_SIZE)
+    samples = sequence.random_sample(RANDOM_SAMPLE_BATCH_SIZE)
     images = []
-    moves = []
-    rewards = []
-    for experience in experiences:
-        image, move, y = experience.as_image_move_y_tuple()
-        images.append(image)
-        moves.append(move)
-        rewards.append(y)
+    actions = []
+    values = []
+    for sample in samples:
+        values.append(get_value_from_sample(sample, model))
+        images.append(sample.old_state[np.newaxis,...])
+        action_array = np.zeros(len(VALID_MOVES))
+        action_array[sample.action] = 1
+        actions.append(action_array)
 
-    rewards = np.array(rewards)
+    values = np.array(values)
     images = np.array(images)
-    moves = np.array(moves)
+    actions = np.array(actions)
 
-    model.fit([moves, images], rewards, batch_size=RANDOM_SAMPLE_BATCH_SIZE, nb_epoch=1, verbose=0)
+    model.fit([actions, images], values, batch_size=RANDOM_SAMPLE_BATCH_SIZE)
 
 def do_game(sequence, model, game_number):
     game = Game(graphical=False)
     while True: # Iterate moves.
         sys.stdout.flush()
-        prev_state = game.state.plane.copy()
+        old_state = game.state.plane.copy()
         old_times_eaten = game.state.times_eaten
         # Guess that we don't die.
         terminal = False
@@ -189,49 +186,84 @@ def do_game(sequence, model, game_number):
         except LoseException as e:
             reward = DYING_POINTS # Game over is really bad.
             terminal = True
-            if game_number % 10 == 0:
-                print('food: {} moves: {}'.format(str(e.score.food).zfill(3), e.score.moves))
         new_state = game.state.plane.copy()
 
+        #print_plane(new_state) 
+
         # Save this transition.
-        sequence.record_transition(prev_state, action, reward, new_state, terminal)
+        sequence.record_transition(old_state, action, reward, new_state, terminal)
 
         # Begin the learning phase
         if sequence.is_ready_to_train():
             do_learning(model, sequence)
         if terminal:
             sequence.finish_game()
-            return game.state.moves 
+            return game.state.moves, game.state.times_eaten
 
+def do_execution(sequence, model, args):
+    mode = 'a' if args.restart else 'w'
+    with open(args.logfile, mode) as log:
+        if mode == 'w':
+            log.write('epochs,games,moves,food,p_random')
+            log.write('\n')
+        print('Beginning Execution')
+        game_number = 0
+        moves_history = []
+        food_history = []
+        while True: # Iterate game.
+            moves, foods = do_game(sequence, model, game_number)
+            moves_history.append(moves)
+            food_history.append(foods)
+            game_number += 1
+            if game_number % 50 == 0:
+                avg_moves = np.mean(moves_history)
+                avg_food = np.mean(food_history)
+                rand_move_prob = get_random_move_probability(model.n_epochs)
 
-def do_execution(model):
-    print('Beginning Execution')
-    sequence = TransitionSequence()
-    game_number = 0
-    moves_history = []
-    while True: # Iterate game.
-        moves = do_game(sequence, model, game_number)
-        moves_history.append(moves)
-        game_number += 1
-        if game_number % 100 == 0:
-            print('Avg Moves = {:0.2f}'.format(np.mean(moves_history)))
-            moves_history = []
+                log.write('{},{},{:0.4f},{:0.4f},{:0.4f}'.format(model.n_epochs, game_number, avg_moves, avg_food, rand_move_prob))
+                log.write('\n')
+                log.flush()
 
+                print('Avg Moves = {:0.2f}'.format(avg_moves))
+                print('Avg food = {:0.2f}'.format(avg_food))
+                print('(P) Random = {:0.2f}'.format(rand_move_prob))
+
+                model.save_performance(avg_moves, avg_food, game_number)
+
+                moves_history = []
+                food_history = []
+
+def get_sequence():
+    with open('sequence.pkl', 'rb') as f:
+        sys.setrecursionlimit(25000)
+        sequence = pickle.load(f)
+    return sequence
+
+def parse_args():
+    parser = ArgumentParser()
+    parser.add_argument('--restart', action='store_true')
+    parser.add_argument('--logfile', default='training.csv')
+    return parser.parse_args()
 
 def main():
-    if 'scratch' in sys.argv:
-        model = RewardPredictor()
+    args = parse_args()
+    if args.restart == True:
+        model = get_model()
+        sequence = get_sequence()
     else:
-        with open('model.pkl', 'rb') as f:
-            model = pickle.load(f)
+        model = QNetwork()
+        sequence = TransitionSequence()
     try:
-        do_execution(model)
+        do_execution(sequence, model, args)
     except KeyboardInterrupt:
         print()
         print("KeyboardInterrupt Received. Writing Model.")
+
+        sys.setrecursionlimit(25000)
         with open('model.pkl', 'wb') as f:
-            sys.setrecursionlimit(25000)
             pickle.dump(model, f)
+        with open('sequence.pkl', 'wb') as f:
+            pickle.dump(sequence, f)
 
 if __name__ == '__main__':
     main()

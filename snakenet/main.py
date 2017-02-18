@@ -1,5 +1,6 @@
 
 import sys
+import time
 import pygame
 import pygame.locals as pl
 
@@ -8,10 +9,10 @@ from argparse import ArgumentParser
 from snakenet.draw import draw_plane
 from snakenet.game import Game
 from snakenet.game_constants import DOWN, UP, RIGHT, LEFT
-from snakenet.model_player import get_model_keypress
-from snakenet.train import RewardPredictor
+from snakenet.model_player import get_model_keypress, warmup_model_player
+from snakenet.train import QNetwork 
 
-RewardPredictor = RewardPredictor
+QNetwork = QNetwork
 
 QUIT = 'quit'
 TICK = pygame.USEREVENT + 1
@@ -67,13 +68,25 @@ def mainloop(game):
         process_events(game, clock)
         clock.tick(60)
 
+def do_warmup():
+    print('Warming up model player...', end=' ')
+    warmup_model_player()
+    print('Warmup completed.')
+
 def main():
+    if ARGS.input == 'model':
+        # Don't let the game initialize before the model player is ready.
+        do_warmup()
+
     pygame.init()
     game = Game()
 
     # Do an initial draw.
     draw_plane(game)
     pygame.display.update()
+
+    # Wait for everything to complete.
+    time.sleep(0.2)
 
     # Enter the mainloop.
     try:

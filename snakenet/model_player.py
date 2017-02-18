@@ -14,15 +14,32 @@ def get_model():
             _MODEL = pickle.load(f)
     return _MODEL
 
-def get_model_prediction_idx(game, model):
-    data = game.state.plane[np.newaxis,:,:][np.newaxis,...]
-    predicted_rewards = []
+def warmup_model_player():
+    get_model() 
+
+def get_future_rewards(image, model):
+    image = image[np.newaxis,:,:][np.newaxis,...]
+    moves = []
     for move_idx, move in enumerate(VALID_MOVES):
         move_array = np.zeros(4)
         move_array[move_idx] = 1
-        move_array = move_array[np.newaxis,:]
-        model_output = model.predict([move_array, data]) # Predict one item.
-        predicted_rewards.append(model_output[0])
+        moves.append(move_array)
+
+    move_input = np.array(moves)
+    image_input = np.repeat(image, 4, axis=0)
+
+    predicted_rewards = model.predict([move_input, image_input])
+
+    return predicted_rewards
+
+def get_model_prediction_idx(game, model):
+    """
+    This is the equivalent of the policy (pi). It converts the
+    output of the Q-function to an action. In this case, the
+    action is selecting the index of a move to perform.
+    """
+    image = game.state.plane
+    predicted_rewards = get_future_rewards(image, model) 
     max_prediction_idx = np.argmax(predicted_rewards)
     return max_prediction_idx 
 
