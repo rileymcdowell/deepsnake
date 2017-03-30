@@ -17,20 +17,11 @@ def get_model():
 def warmup_model_player():
     get_model() 
 
-def get_future_rewards(image, model):
-    image = image[np.newaxis,:,:][np.newaxis,...]
-    moves = []
-    for move_idx, move in enumerate(VALID_MOVES):
-        move_array = np.zeros(4)
-        move_array[move_idx] = 1
-        moves.append(move_array)
-
-    move_input = np.array(moves)
-    image_input = np.repeat(image, 4, axis=0)
-
-    predicted_rewards = model.predict([move_input, image_input])
-
-    return predicted_rewards
+def get_action_values(image, model):
+    image = image[np.newaxis,...] # Add color channel.
+    image = image[np.newaxis,...] # Make it a singleton list.
+    action_values = model.predict([image])[0] # Extract the values.
+    return action_values
 
 def get_model_prediction_idx(game, model):
     """
@@ -39,12 +30,12 @@ def get_model_prediction_idx(game, model):
     action is selecting the index of a move to perform.
     """
     image = game.state.plane
-    predicted_rewards = get_future_rewards(image, model) 
-    max_prediction_idx = np.argmax(predicted_rewards)
-    return max_prediction_idx 
+    action_values = get_action_values(image, model)
+    max_prediction_idx = np.argmax(action_values)
+    return max_prediction_idx, action_values 
 
 def get_model_keypress(game):
     model = get_model()
-    predicted_best_move_idx = get_model_prediction_idx(game, model) 
+    predicted_best_move_idx, action_values = get_model_prediction_idx(game, model) 
     predicted_best_move = VALID_MOVES[predicted_best_move_idx]
-    return MOVE_TO_KEYPRESS[predicted_best_move]
+    return MOVE_TO_KEYPRESS[predicted_best_move], action_values

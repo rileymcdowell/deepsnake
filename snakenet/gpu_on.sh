@@ -1,1 +1,1 @@
-export THEANO_FLAGS="device=gpu,floatX=float32,lib.cnmem=0.9"
+export THEANO_FLAGS="device=cuda0,floatX=float32,lib.cnmem=0.9"

@@ -14,6 +14,7 @@ class GameState(object):
         self.food_position = None
         self.last_pressed = None 
         self.last_moved = UP # Snake start in middle going up.
+        self.action_values = (None, None, None, None) 
 
         # Setup the initial game state.
         self.initialize()
@@ -83,7 +84,7 @@ class GameState(object):
     def column(self):
         return self.snake_position[1]
     
-    def process_move(self):
+    def process_move(self, action_values=None):
         if self.last_pressed == UP:
             self.set_snake(self.row - 1, self.column)
             self.last_moved = UP
@@ -97,4 +98,7 @@ class GameState(object):
             self.set_snake(self.row, self.column - 1)
             self.last_moved = LEFT
         self.moves += 1
-            
+
+        # Might save this.
+        if action_values is not None:
+            self.action_values = action_values 

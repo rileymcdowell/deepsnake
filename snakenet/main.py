@@ -6,7 +6,7 @@ import pygame.locals as pl
 
 from argparse import ArgumentParser
 
-from snakenet.draw import draw_plane
+from snakenet.draw import draw_game
 from snakenet.game import Game
 from snakenet.game_constants import DOWN, UP, RIGHT, LEFT
 from snakenet.model_player import get_model_keypress, warmup_model_player
@@ -24,8 +24,8 @@ def parse_args():
 
 ARGS = parse_args()
 
-def process_tick(game):
-    game.move()
+def process_tick(game, action_values=None):
+    game.move(action_values)
 
 def process_keypress(game, key):
     if key == pygame.K_UP:
@@ -48,14 +48,14 @@ def process_event(game, event):
             process_keypress(game, event.key)
 
     if event.type == TICK:
+        action_values = None
         if ARGS.input == 'model':
-            key = get_model_keypress(game)
+            key, action_values = get_model_keypress(game)
             process_keypress(game, key)
         # Update the game.
-        process_tick(game)
+        process_tick(game, action_values)
         # Refresh the image.
-        draw_plane(game)
-        pygame.display.update()
+        draw_game(game)
 
 def process_events(game, clock):
     for event in pygame.event.get():
@@ -82,8 +82,7 @@ def main():
     game = Game()
 
     # Do an initial draw.
-    draw_plane(game)
-    pygame.display.update()
+    draw_game(game)
 
     # Wait for everything to complete.
     time.sleep(0.2)

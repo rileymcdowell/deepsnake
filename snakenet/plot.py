@@ -4,20 +4,34 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
-df = pd.read_csv('./training.csv')
+df = pd.read_csv('./log_training.csv')
 
-def movingaverage(interval, window_size):
-    window = np.ones(int(window_size)) / float(window_size)
-    return np.convolve(interval, window, 'same')
-
-
-a_moves = movingaverage(df['moves'], 50)
-print(a_moves.shape)
-print(len(df))
+a_moves = df['moves'].rolling(window=50).mean()
 df['a_moves'] = a_moves
+
+a_food = df['food'].rolling(window=50).mean()
+df['a_food'] = a_food
+
+a_av = df['mean_val'].rolling(window=50).mean()
+df['a_mean_val'] = a_av
 
 import matplotlib.pyplot as plt
 
+
 sns.set_style('darkgrid')
-df.plot(x='epochs', y=['moves', 'a_moves'])
+f, axarr = plt.subplots(nrows=3, ncols=1, sharex=True, sharey=False)
+
+axarr[0].plot(df['epochs'], df['moves'], c='blue')
+axarr[0].plot(df['epochs'], df['a_moves'], c='red')
+axarr[0].set_title('Moves Per Game')
+
+axarr[1].plot(df['epochs'], df['food'], c='blue')
+axarr[1].plot(df['epochs'], df['a_food'], c='red')
+axarr[1].set_title('Food Per Game')
+
+axarr[2].semilogy(df['epochs'], df['mean_val'], c='blue')
+axarr[2].semilogy(df['epochs'], df['a_mean_val'], c='red')
+axarr[2].set_title('Mean Action Value Per Game')
+
+
 plt.show()

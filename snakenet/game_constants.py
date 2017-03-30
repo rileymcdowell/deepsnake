@@ -2,13 +2,20 @@ import pygame
 
 from collections import namedtuple
 
-# Screen Constants
-PIXEL_SIZE = 16 
-NUM_ROWS = 16 + 1 
-NUM_COLUMNS = 16 + 1 
+
+# Board Constants
+PIXEL_SIZE = 20 
+NUM_ROWS = 11 + 1 
+NUM_COLUMNS = 11 + 1 
 PAD_ROWS = 1
 PAD_COLUMNS = 1
-RESOLUTION = (PIXEL_SIZE * (NUM_ROWS+PAD_ROWS*2), PIXEL_SIZE * (NUM_COLUMNS+PAD_COLUMNS*2))
+RESOLUTION = ( PIXEL_SIZE * (NUM_ROWS+PAD_ROWS*2), PIXEL_SIZE * (NUM_COLUMNS+PAD_COLUMNS*2) )
+
+LEFT_BAR_WIDTH = PIXEL_SIZE * 4
+SCREEN_SIZE = (RESOLUTION[0] + LEFT_BAR_WIDTH, RESOLUTION[1])
+ZOOM_GRID_ROW_OFFSET = 0 # Start at top (0) of left bar.
+ACTION_VALUE_ROW_OFFSET = NUM_ROWS // 2 # Middle of left bar.
+
 
 # Directions 
 DOWN = 'd'
