@@ -5,14 +5,6 @@ import numpy as np
 
 from warnings import catch_warnings
 from uuid import uuid4
-from collections import namedtuple, deque 
-from keras.models import Sequential, Model
-from keras.layers import Dense, Activation, Flatten, Dropout, Input, merge
-from keras.layers import Convolution2D, MaxPooling2D
-from keras.layers.advanced_activations import PReLU
-from keras.layers.normalization import BatchNormalization
-from keras.layers.merge import Concatenate
-from keras.optimizers import Nadam, RMSprop
 from itertools import takewhile, islice
 from argparse import ArgumentParser
 
@@ -20,33 +12,23 @@ from snakenet.game import Game
 from snakenet.model_player import get_model_prediction_idx, VALID_MOVES, get_model, get_action_values 
 from snakenet.game_constants import DOWN, UP, LEFT, RIGHT, NUM_ROWS, NUM_COLUMNS, LoseException
 from snakenet.snake_printer import print_plane
+from snakenet.replay_memory import ReplayMemory
 from snakenet.draw import draw_game
 
-TRANSITION_MEMORY = int(1e6) # Number of 'inter-frames' to remember
-DISCOUNT_FACTOR_GAMMA = 0.95
-N_VALID_MOVES = len(VALID_MOVES)
-
-ALIVE_POINTS = 0
-EATING_POINTS = 1
-USELESS_MOVE_POINTS = -0.1
-DYING_POINTS = -1
-
-RANDOM_SAMPLE_BATCH_SIZE = 25 
+from keras.models import Sequential, Model
+from keras.layers import Dense, Activation, Flatten, Dropout, Input, merge
+from keras.layers import Convolution2D, MaxPooling2D
+from keras.layers.advanced_activations import PReLU
+from keras.layers.normalization import BatchNormalization
+from keras.layers.merge import Concatenate
+from keras.optimizers import RMSprop
 
 
-# Filters, filter size, padding.
-CONV_CONFIG = [ (32, (3, 3), 'same') 
-              #, (32, (6, 6), 'same')
-              ]
-              
-POOL_SIZE = (2, 2) 
+from snakenet.train_constants import *
 
 # 1 is number of channels (this is grayscale).
 input_shape = (1, NUM_ROWS, NUM_COLUMNS)
 
-# Start at 1.0. Decline linearly for NUM_DECLINING_EPOCHS towards RANDOM_END_P.
-NUM_DECLINING_EPOCHS = 1e6
-RANDOM_END_P = 0.05
 def get_random_move_probability(cur_epoch):
     if cur_epoch > NUM_DECLINING_EPOCHS:
         return RANDOM_END_P
@@ -68,7 +50,6 @@ def construct_model():
         # Adding includes conv layer and activation function.     
         action_value_net.add(Convolution2D(filters, kernel_size, **kwargs))
         action_value_net.add(PReLU())
-        action_value_net.add(BatchNormalization(axis=1))
 
     # Trying to get translation invariance.
     action_value_net.add(MaxPooling2D(pool_size=POOL_SIZE, strides=POOL_SIZE, padding="same"))
@@ -80,8 +61,7 @@ def construct_model():
     assert float(NUM_COLUMNS) / POOL_SIZE[1] % 1 == 0., msg 
 
     action_value_net.add(Dense(512, use_bias=False))
-    action_value_net.add(BatchNormalization(axis=1))
-    action_value_net.add(Activation('relu'))
+    action_value_net.add(PReLU())
     action_value_net.add(Dense(len(VALID_MOVES)))
     action_value_net.add(Activation('linear'))
 
@@ -89,11 +69,12 @@ def construct_model():
     optimizer = RMSprop()
     action_value_net.compile(loss='mse', optimizer=optimizer)
 
-    return action_value_net 
+    return action_value_net
 
-class QNetwork(object):
+class DQNModel(object):
     def __init__(self):
-        self.model = construct_model()
+        self.online_model = construct_model()
+        self.target_model = construct_model()
         self.n_epochs = 0
         self.avg_moves = [] 
         self.avg_food = []
@@ -106,40 +87,26 @@ class QNetwork(object):
         self.n_games.append(games)
         self.epoch_counter.append(self.n_epochs)
 
+    def _maybe_copy_online_to_target(self):
+        is_new = self.n_epochs == 0
+        time_for_copy = self.n_epochs % TARGET_NETWORK_UPDATE_FREQUENCY == 0
+        if time_for_copy and not is_new:
+            print('Copying weights from online to target network. epochs={}'.format(self.n_epochs))
+            # Slick keras methods for this process.
+            self.target_model.set_weights(self.online_model.get_weights())
+
     def fit(self, inputs, targets, **kwargs):
+        self._maybe_copy_online_to_target()
         self.n_epochs += 1
-        self.model.fit(inputs, targets, epochs=1, verbose=0, **kwargs)
+        self.online_model.fit(inputs, targets, epochs=1, verbose=0, **kwargs)
 
-    def predict(self, inputs):
-        return self.model.predict(inputs)
-
-Transition = namedtuple('Transition', ['old_state', 'action', 'reward', 'new_state', 'terminal'])
-
-class TransitionSequence(object):
-    def __init__(self):
-        self.transitions = deque(maxlen=TRANSITION_MEMORY) 
-        self.next_transitions = []
-
-    def random_sample(self, sample_size):
-        idxs = np.random.choice(len(self.transitions), size=sample_size) 
-
-        samples = []
-        for idx in idxs:
-            samples.append(self.transitions[idx])
-
-        return samples
-
-    def record_transition(self, old_state, action, reward, new_state, terminal):
-        self.next_transitions.append(Transition(old_state, action, reward, new_state, terminal))
-
-    def is_ready_to_train(self):
-        return len(self.transitions) > 0
-
-    def finish_game(self):
-        for nt in self.next_transitions:
-            self.transitions.append(nt)
-
-RANDOM_MOVE_ACTION_VALUES = (None,)*4
+    def predict(self, inputs, target_network):
+        if target_network == True:
+            return self.target_model.predict(inputs)
+        elif target_network == False:
+            return self.online_model.predict(inputs)
+        else:
+            assert False # Should never happen.
 
 def trigger_and_return_action(game, sequence, model):
     p = np.random.random(1)
@@ -147,22 +114,26 @@ def trigger_and_return_action(game, sequence, model):
         move_idx = get_random_move_idx()
         action_values = RANDOM_MOVE_ACTION_VALUES
     else:
-        move_idx, action_values = get_model_prediction_idx(game, model)
+        move_idx, action_values = get_model_prediction_idx(game, model, target_network=False)
     was_valid = game.keypress(VALID_MOVES[move_idx])
     return move_idx, was_valid, action_values
 
 def get_value_from_sample(sample, model):
-    """ Calculate the Q value for this transition """
+    """ 
+    Calculate the Q value for this transition. 
+    This is where the magic of the Double DQN (Hasselt et al., 2015) happens. 
+    """
     if sample.terminal:
         return sample.reward
     else:
-        # Note: This is the Bellman equation!
-        future_reward = np.max(get_action_values(sample.new_state, model))
-        discounted_future_reward = future_reward * DISCOUNT_FACTOR_GAMMA
-        return sample.reward + discounted_future_reward
+        online_action_values = get_action_values(sample.new_state, model, target_network=False)
+        online_action_idx = np.argmax(online_action_values)
+        target_reward = get_action_values(sample.new_state, model, target_network=True)
+        target_reward_value = target_reward[online_action_idx]
+        return sample.reward + DISCOUNT_FACTOR_GAMMA * target_reward_value
 
 def do_learning(model, sequence):
-    samples = sequence.random_sample(RANDOM_SAMPLE_BATCH_SIZE)
+    samples = sequence.sample(SAMPLE_BATCH_SIZE)
     images = []
     values = []
     actions = []
@@ -171,21 +142,25 @@ def do_learning(model, sequence):
         images.append(sample.old_state[np.newaxis,...])
         actions.append(sample.action)
 
-    predictions = model.predict(np.array(images))
+    predictions = model.predict(np.array(images), target_network=False)
 
     # Update desired output _only_ for the actions that we actually observed.
     # Leave the other outputs set to the predicted values (Assume unobserved 
     # action values were predicted correctly). This clever assumption allows 
     # us to update a network which predicts all action values simultaneously 
     # even though we don't observe all possible actions.
-    desired_output = predictions
+    desired_output = predictions.copy()
     rows = np.arange(len(desired_output))
     cols = actions
     desired_output[rows, cols] = values
 
     images = np.array(images)
 
-    model.fit([images], desired_output, batch_size=RANDOM_SAMPLE_BATCH_SIZE)
+    model.fit([images], desired_output, batch_size=SAMPLE_BATCH_SIZE)
+
+    # Update td_error for the samples and put them back into replay memory. 
+    td_errors = np.abs(predictions[rows, cols] - values)
+    sequence.update_transitions(samples, td_errors)
 
 def do_game(sequence, model, game_number, visible, sleep_ms):
     game = Game(graphical=visible)
@@ -238,24 +213,27 @@ def do_execution(sequence, model, args):
         game_number = 0
         moves_history = []
         food_history = []
+        means_history = []
         while True: # Iterate game.
             moves, foods, mean_val = do_game(sequence, model, game_number, args.visible, args.sleep_ms)
             moves_history.append(moves)
             food_history.append(foods)
+            means_history.append(mean_val)
             game_number += 1
             if game_number % 50 == 0:
                 avg_moves = np.mean(moves_history)
                 avg_food = np.mean(food_history)
+                avg_mean_val = np.nanmean(means_history)
                 rand_move_prob = get_random_move_probability(model.n_epochs)
 
                 fmt = '{},{},{:0.4f},{:0.4f},{:0.4f},{:0.4f}'
-                log.write(fmt.format(model.n_epochs, game_number, avg_moves, avg_food, mean_val, rand_move_prob))
+                log.write(fmt.format(model.n_epochs, game_number, avg_moves, avg_food, avg_mean_val, rand_move_prob))
                 log.write('\n')
                 log.flush()
 
                 print('Avg Moves = {:0.2f}'.format(avg_moves))
                 print('Avg food = {:0.2f}'.format(avg_food))
-                print('Mean AV = {:0.2f}'.format(mean_val))
+                print('Mean AV = {:0.2f}'.format(avg_mean_val))
                 print('(P) Random = {:0.2f}'.format(rand_move_prob))
 
                 model.save_performance(avg_moves, avg_food, game_number)
@@ -286,8 +264,8 @@ def main():
         sequence = get_sequence()
     else:
         print('Beginning new training')
-        model = QNetwork()
-        sequence = TransitionSequence()
+        model = DQNModel()
+        sequence = ReplayMemory()
     try:
         do_execution(sequence, model, args)
     except KeyboardInterrupt:

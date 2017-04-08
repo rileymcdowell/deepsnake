@@ -29,8 +29,8 @@ axarr[1].plot(df['epochs'], df['food'], c='blue')
 axarr[1].plot(df['epochs'], df['a_food'], c='red')
 axarr[1].set_title('Food Per Game')
 
-axarr[2].semilogy(df['epochs'], df['mean_val'], c='blue')
-axarr[2].semilogy(df['epochs'], df['a_mean_val'], c='red')
+axarr[2].plot(df['epochs'], df['mean_val'], c='blue')
+axarr[2].plot(df['epochs'], df['a_mean_val'], c='red')
 axarr[2].set_title('Mean Action Value Per Game')
 
 

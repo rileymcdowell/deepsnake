@@ -1,0 +1,13 @@
+2017-04-08 (1999 minutes)
+    Removed BatchNorm and had recovered performance. 
+    Action value inflation under control. 
+    Food peaked around 0.25. Moves peaked around 28.
+    Batch Size 32
+    One Convolutional layer with 32 3x3 filters.
+    One pooling layer with 2x2 filters.
+    Gamma = 0.99
+    End P = 0.05
+    Board = 12x12
+    Alive, Eating, Useless, Dying = 0.01, 1, -0.1, -1
+    
+

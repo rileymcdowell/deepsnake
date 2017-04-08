@@ -1,5 +1,7 @@
 import pygame
 
+import numpy as np
+
 from collections import namedtuple
 
 
@@ -28,6 +30,9 @@ MOVE_TO_KEYPRESS = { UP: pygame.K_UP
                    , LEFT: pygame.K_LEFT
                    }
 
+# Used by model player and trainer to know what is possible.
+VALID_MOVES = np.array([UP, DOWN, LEFT, RIGHT])
+
 # Snake Constants
 SNAKE_INITIALSIZE = 4
 SNAKE_GROWBY = 3
@@ -46,4 +51,5 @@ class LoseException(Exception):
         self.score = Score(food, moves)
         msg = "You Lose. Ate {} times. Moved {} times.".format(self.score.food, self.score.moves)
         super(LoseException, self).__init__(msg)
+
 
